@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>NSW Rail Tracker</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#09090f;--surface:#0f1017;--card:#14151f;--border:#1e2030;
+  --text:#e4e8f0;--muted:#5a6080;--dim:#2a2f45;
+  --accent:#4f8fff;--green:#22c984;--red:#ff4055;--yellow:#ffb020;--orange:#ff7240;
+  --t1:#F99D1C;--t2:#0098CD;--t3:#F37021;--t4:#005AA3;
+  --t5:#C4258F;--t6:#7D4199;--t7:#6F818E;--t8:#00954C;--t9:#D11F2F;
+  --metro:#009B77;--intercity:#E4022D;
+  --mono:'JetBrains Mono',monospace;--sans:'Inter',sans-serif;
+  --r4:4px;--r6:6px;--r8:8px;--r12:12px;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:var(--sans)}
+
+/* LAYOUT */
+#app{display:flex;flex-direction:column;height:100vh}
+header{height:50px;flex-shrink:0;display:flex;align-items:center;gap:12px;padding:0 16px;
+  background:var(--surface);border-bottom:1px solid var(--border)}
+nav{flex-shrink:0;display:flex;background:var(--surface);border-bottom:1px solid var(--border)}
+#main{flex:1;overflow:hidden;display:flex;flex-direction:column;min-height:0}
+.page{display:none;flex:1;overflow:hidden;min-height:0}
+.page.active{display:flex}
+
+/* HEADER */
+.logo{font-family:var(--mono);font-weight:700;font-size:15px;letter-spacing:-0.5px}
+.logo span{color:var(--accent)}
+.pill{display:flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;
+  font-family:var(--mono);font-size:10px}
+.pill.live{background:rgba(34,201,132,.1);border:1px solid rgba(34,201,132,.2);color:var(--green)}
+.pill.off{background:rgba(255,64,85,.1);border:1px solid rgba(255,64,85,.2);color:var(--red)}
+.dot{width:6px;height:6px;border-radius:50%;animation:blink 1.8s infinite}
+.dot.g{background:var(--green)} .dot.r{background:var(--red)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.3}}
+#hCount{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto}
+#hTime{font-family:var(--mono);font-size:10px;color:var(--dim)}
+
+/* NAV TABS */
+.ntab{padding:10px 18px;font-size:12px;font-weight:500;color:var(--muted);
+  cursor:pointer;border-bottom:2px solid transparent;transition:all .15s;user-select:none}
+.ntab:hover{color:var(--text)}
+.ntab.on{color:var(--accent);border-bottom-color:var(--accent)}
+
+/* SIDEBAR SHARED */
+.sidebar{width:310px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;min-height:0}
+.sb-head{padding:10px;border-bottom:1px solid var(--border);flex-shrink:0;display:flex;flex-direction:column;gap:6px}
+.sb-body{flex:1;overflow-y:auto;padding:4px}
+.sb-body::-webkit-scrollbar{width:3px}
+.sb-body::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px}
+
+/* SEARCH + FILTER */
+.qbox{width:100%;padding:7px 10px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r6);color:var(--text);font-family:var(--mono);font-size:11px;outline:none}
+.qbox:focus{border-color:var(--accent)}
+.qbox::placeholder{color:var(--dim)}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chip{padding:3px 8px;border-radius:20px;font-size:10px;font-weight:500;
+  border:1px solid var(--border);color:var(--muted);cursor:pointer;transition:all .12s;white-space:nowrap}
+.chip:hover,.chip.on{border-color:var(--accent);color:var(--accent);background:rgba(79,143,255,.08)}
+
+/* TRAIN CARDS */
+.tc{padding:9px 10px;border-radius:var(--r6);margin-bottom:3px;cursor:pointer;
+  border:1px solid transparent;background:rgba(255,255,255,.02);transition:border .1s,background .1s}
+.tc:hover{border-color:var(--border);background:rgba(255,255,255,.03)}
+.tc.sel{border-color:var(--accent);background:rgba(79,143,255,.06)}
+.tc-top{display:flex;align-items:center;gap:6px;margin-bottom:4px}
+.lbadge{padding:2px 7px;border-radius:var(--r4);font-family:var(--mono);font-size:10px;font-weight:700;color:#fff;flex-shrink:0}
+.tc-dest{font-size:12px;font-weight:500;flex:1;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.stag{font-size:9px;padding:1px 4px;border-radius:2px;flex-shrink:0}
+.stag.spec{background:rgba(255,176,32,.15);color:var(--yellow);border:1px solid rgba(255,176,32,.3)}
+.stag.cncl{background:rgba(255,64,85,.15);color:var(--red);border:1px solid rgba(255,64,85,.3)}
+.tc-bot{display:flex;align-items:center;gap:6px;font-family:var(--mono);font-size:10px;color:var(--muted)}
+.tc-bot b{color:var(--text)} .tc-bot .s{color:var(--accent)}
+.dbadge{font-size:10px;margin-left:auto}
+.ok{color:var(--green)} .late{color:var(--red)} .early{color:var(--green)}
+
+/* MAP */
+#map{flex:1;min-height:0;position:relative}
+#leaflet{position:absolute;inset:0}
+.leaflet-tile{filter:brightness(.7) saturate(.35) hue-rotate(200deg) invert(1)}
+.leaflet-container{background:var(--bg)}
+.map-ctrls{position:absolute;bottom:16px;right:10px;z-index:500;display:flex;flex-direction:column;gap:4px}
+.mcbtn{padding:6px 10px;background:var(--surface);border:1px solid var(--border);
+  border-radius:var(--r6);color:var(--text);font-size:10px;font-weight:500;
+  cursor:pointer;white-space:nowrap;transition:border-color .12s;font-family:var(--sans)}
+.mcbtn.on{border-color:var(--accent);color:var(--accent)}
+.mcbtn:hover{border-color:var(--dim)}
+
+/* MARKERS */
+.mk-circle{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:8px;font-weight:700;color:#fff;
+  border:2px solid rgba(255,255,255,.35);box-shadow:0 1px 4px rgba(0,0,0,.6);cursor:pointer}
+.mk-label{display:flex;border-radius:var(--r4);overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,.6);cursor:pointer}
+.mk-label-line{padding:2px 5px;font-family:var(--mono);font-size:9px;font-weight:700;color:#fff}
+.mk-label-run{padding:2px 5px;font-family:var(--mono);font-size:9px;color:#fff;background:rgba(0,0,0,.45)}
+.mk-dot{width:10px;height:10px;border-radius:50%;border:2px solid rgba(255,255,255,.45);cursor:pointer}
+
+/* POPUP */
+.leaflet-popup-content-wrapper{background:var(--card)!important;border:1px solid var(--border)!important;
+  border-radius:var(--r8)!important;box-shadow:0 8px 24px rgba(0,0,0,.7)!important;
+  color:var(--text)!important;padding:0!important}
+.leaflet-popup-content{margin:0!important;min-width:200px}
+.leaflet-popup-tip{background:var(--card)!important}
+.leaflet-popup-close-button{color:var(--muted)!important;top:8px!important;right:8px!important}
+.pu{padding:12px}
+.pu-run{font-family:var(--mono);font-size:16px;font-weight:700;margin-bottom:6px}
+.pu-row{display:flex;justify-content:space-between;margin:2px 0;font-size:11px}
+.pu-l{color:var(--muted)} .pu-v{font-family:var(--mono)} .pu-v.a{color:var(--accent)}
+.pu-btn{margin-top:8px;width:100%;padding:6px;border-radius:var(--r4);font-size:11px;
+  cursor:pointer;font-family:var(--sans);font-weight:500}
+.pu-btn.p{background:rgba(79,143,255,.1);border:1px solid rgba(79,143,255,.3);color:var(--accent)}
+.pu-btn.c{margin-top:3px;background:rgba(255,176,32,.08);border:1px solid rgba(255,176,32,.25);color:var(--yellow)}
+.pu-btn:hover{filter:brightness(1.2)}
+
+/* DETAIL PANEL */
+.detail{width:290px;background:var(--surface);border-left:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0;min-height:0;position:relative}
+.detail.hide{display:none}
+.dt-x{position:absolute;top:10px;right:10px;width:22px;height:22px;background:var(--border);
+  border:none;color:var(--muted);border-radius:var(--r4);cursor:pointer;font-size:13px;z-index:2;
+  display:flex;align-items:center;justify-content:center}
+.dt-top{padding:14px 36px 12px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.dt-run{font-family:var(--mono);font-size:18px;font-weight:700;margin-bottom:3px}
+.dt-sub{font-size:11px;color:var(--muted)}
+.dt-tags{display:flex;gap:5px;margin-top:6px;flex-wrap:wrap}
+.dtag{font-size:9px;padding:2px 6px;border-radius:var(--r4);font-weight:600}
+.dtag.ac{background:rgba(34,201,132,.12);color:var(--green);border:1px solid rgba(34,201,132,.25)}
+.dtag.noac{background:rgba(90,96,128,.1);color:var(--muted);border:1px solid var(--border)}
+.dtag.dd{background:rgba(79,143,255,.1);color:var(--accent);border:1px solid rgba(79,143,255,.25)}
+.dtag.el{background:rgba(79,143,255,.1);color:var(--accent);border:1px solid rgba(79,143,255,.25)}
+.dtag.di{background:rgba(255,114,64,.1);color:var(--orange);border:1px solid rgba(255,114,64,.25)}
+.dtag.sp{background:rgba(255,176,32,.12);color:var(--yellow);border:1px solid rgba(255,176,32,.3)}
+.dtag.cn{background:rgba(255,64,85,.12);color:var(--red);border:1px solid rgba(255,64,85,.3)}
+
+.dt-meta{padding:10px 14px;display:grid;grid-template-columns:1fr 1fr;gap:7px;
+  border-bottom:1px solid var(--border);flex-shrink:0}
+.dm-l{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:1px}
+.dm-v{font-family:var(--mono);font-size:11px;font-weight:600}
+.dm-v.a{color:var(--accent)} .dm-v.g{color:var(--green)} .dm-v.r{color:var(--red)} .dm-v.y{color:var(--yellow)}
+.dm-v.loc{font-size:9px;color:var(--accent);word-break:break-all}
+
+/* CONSIST STRIP */
+.consist-strip{padding:8px 14px;border-bottom:1px solid var(--border);flex-shrink:0}
+.cs-label{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:5px}
+.cs-cars{display:flex;gap:2px}
+.cs-car{flex:1;height:22px;border-radius:3px;display:flex;align-items:center;justify-content:center;
+  font-family:var(--mono);font-size:7px;font-weight:700;color:#fff;cursor:pointer;
+  transition:filter .1s;position:relative;overflow:hidden}
+.cs-car:hover{filter:brightness(1.2)}
+.cs-car .occ-bar{position:absolute;bottom:0;left:0;right:0;background:rgba(0,0,0,.35);height:3px}
+.cs-car .occ-fill{height:100%;transition:width .4s}
+
+/* STOPS */
+.dt-stops{flex:1;overflow-y:auto;padding:6px 0}
+.dt-stops::-webkit-scrollbar{width:3px}
+.dt-stops::-webkit-scrollbar-thumb{background:var(--border)}
+.sr{display:flex;align-items:center;padding:5px 14px;gap:8px;font-size:11px;position:relative}
+.sr.done{opacity:.35} .sr.nxt{background:rgba(79,143,255,.06)}
+.sr-line{position:absolute;left:17px;top:0;bottom:0;width:2px;background:var(--border)}
+.sr-dot{width:7px;height:7px;border-radius:50%;background:var(--dim);border:2px solid var(--muted);flex-shrink:0;z-index:1}
+.sr.nxt .sr-dot{background:var(--accent);border-color:var(--accent);box-shadow:0 0 5px var(--accent)}
+.sr-name{flex:1;font-weight:500}
+.sr-skip{font-size:8px;padding:1px 4px;border-radius:2px;background:rgba(255,64,85,.15);color:var(--red);margin-left:4px}
+.sr-delay{font-size:9px;margin-left:4px}
+.sr-time{font-family:var(--mono);color:var(--muted);font-size:10px}
+
+/* CONSIST MODAL */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:2000;
+  align-items:center;justify-content:center}
+.modal-bg.show{display:flex}
+.modal{background:var(--card);border:1px solid var(--border);border-radius:var(--r12);
+  padding:20px;width:520px;max-width:95vw;max-height:85vh;overflow-y:auto}
+.modal h2{font-size:16px;font-weight:600;margin-bottom:3px}
+.modal .sub{font-size:11px;color:var(--muted);margin-bottom:16px}
+.cm-tags{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:14px}
+.cm-note{font-size:11px;color:var(--muted);margin-bottom:14px;padding:8px;
+  background:rgba(255,255,255,.03);border-radius:var(--r6);border-left:2px solid var(--border)}
+.cm-cars{display:flex;flex-direction:column;gap:3px}
+.cm-car{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:var(--r6);
+  background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06)}
+.cm-car-n{font-family:var(--mono);font-size:11px;font-weight:700;width:20px;text-align:right;flex-shrink:0}
+.cm-car-body{flex:1;height:30px;border-radius:var(--r4);background:rgba(255,255,255,.07);
+  overflow:hidden;border:1px solid rgba(255,255,255,.1);position:relative}
+.cm-car-body.cab-end{border:1px solid}
+.cm-occ-bar{position:absolute;left:0;top:0;bottom:0;opacity:.5;transition:width .3s}
+.cm-car-inner{position:absolute;inset:0;display:flex;align-items:center;padding:0 8px;gap:5px}
+.cm-car-type{font-family:var(--mono);font-size:9px;font-weight:700}
+.cm-car-desc{font-size:9px;color:rgba(255,255,255,.55)}
+.cm-car-icons{font-size:10px;margin-left:auto}
+.cm-occ-val{font-family:var(--mono);font-size:10px;font-weight:700;width:36px;text-align:right;flex-shrink:0}
+.cm-legend{display:flex;gap:14px;margin-top:12px;font-size:10px;color:var(--muted)}
+.modal-close{margin-top:14px;width:100%;padding:8px;background:var(--border);border:none;
+  color:var(--text);border-radius:var(--r6);cursor:pointer;font-family:var(--sans);font-size:12px;font-weight:500}
+
+/* WEB TLS */
+.tls-outer{display:flex;flex:1;overflow:hidden;min-height:0}
+.tls-side{width:240px;background:var(--surface);border-right:1px solid var(--border);
+  display:flex;flex-direction:column;overflow:hidden;flex-shrink:0}
+.tls-side h3{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);padding:12px 12px 6px}
+.tls-legend{padding:0 12px 12px;border-bottom:1px solid var(--border)}
+.leg{display:flex;align-items:center;gap:7px;margin-bottom:4px;font-size:11px;color:var(--muted)}
+.leg-bar{width:22px;height:4px;border-radius:2px;flex-shrink:0}
+.tls-list{flex:1;overflow-y:auto;padding:4px}
+.tls-list::-webkit-scrollbar{width:3px}
+.tls-list::-webkit-scrollbar-thumb{background:var(--border)}
+.tls-warn{padding:8px 12px;font-size:9px;color:var(--dim);border-top:1px solid var(--border)}
+.tls-canvas{flex:1;overflow:auto;background:#04050a}
+#tls-svg{min-width:1800px;display:block}
+
+/* TIMETABLE */
+.tt-outer{display:flex;flex:1;overflow:hidden;min-height:0}
+.tt-filters{width:220px;background:var(--surface);border-right:1px solid var(--border);
+  padding:12px;overflow-y:auto;flex-shrink:0;display:flex;flex-direction:column;gap:12px}
+.tt-filters h3{font-size:9px;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);margin-bottom:4px}
+.tt-sel{width:100%;padding:6px 8px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r4);color:var(--text);font-size:11px;outline:none}
+.tt-sel:focus{border-color:var(--accent)}
+.set-grid{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.set-btn{padding:4px 6px;border-radius:3px;border:1px solid var(--border);background:transparent;
+  color:var(--muted);font-size:10px;cursor:pointer;text-align:center;transition:all .1s}
+.set-btn.on{border-color:var(--accent);color:var(--accent);background:rgba(79,143,255,.08)}
+.tt-apply{padding:8px;background:var(--accent);border:none;border-radius:var(--r6);
+  color:#fff;font-size:12px;cursor:pointer;font-weight:500;font-family:var(--sans)}
+.tt-apply:hover{background:#3a7aee}
+.tt-main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0}
+.tt-topbar{padding:10px 12px;border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-shrink:0}
+.tt-q{flex:1;padding:7px 10px;background:var(--bg);border:1px solid var(--border);
+  border-radius:var(--r6);color:var(--text);font-family:var(--mono);font-size:11px;outline:none}
+.tt-q:focus{border-color:var(--accent)}
+.tt-cnt{font-size:11px;color:var(--muted);font-family:var(--mono);white-space:nowrap}
+.tt-scroll{flex:1;overflow-y:auto;min-height:0}
+.tt-scroll::-webkit-scrollbar{width:4px}
+.tt-scroll::-webkit-scrollbar-thumb{background:var(--border)}
+table{width:100%;border-collapse:collapse;font-size:11px}
+thead{position:sticky;top:0;background:var(--surface);z-index:5}
+th{padding:8px 10px;text-align:left;font-family:var(--mono);font-size:9px;color:var(--dim);
+  text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border);font-weight:600}
+td{padding:7px 10px;border-bottom:1px solid rgba(30,32,48,.4);vertical-align:middle}
+tr:hover td{background:rgba(255,255,255,.015);cursor:pointer}
+.tt-badge{display:inline-block;padding:2px 6px;border-radius:var(--r4);font-family:var(--mono);font-size:10px;font-weight:700;color:#fff}
+.tt-fleet{font-family:var(--mono);color:var(--accent);font-weight:600}
+.live-dot{display:inline-block;width:5px;height:5px;border-radius:50%;
+  background:var(--green);box-shadow:0 0 4px var(--green);margin-right:3px;vertical-align:middle}
+.empty{text-align:center;padding:40px;color:var(--dim);font-size:12px}
+.ac-yes{color:var(--green)} .ac-no{color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app">
+
+<header>
+  <div class="logo">NSW<span>RAIL</span></div>
+  <div class="pill live" id="statusPill"><div class="dot g" id="sDot"></div><span id="sTxt">connecting</span></div>
+  <span id="hTime"></span>
+  <span id="hCount"></span>
+</header>
+
+<nav>
+  <div class="ntab on" onclick="goto('live')">Live Map</div>
+  <div class="ntab" onclick="goto('tls')">WebTLS</div>
+  <div class="ntab" onclick="goto('tt')">Timetable</div>
+</nav>
+
+<div id="main">
+
+<!-- ══ LIVE MAP ══ -->
+<div class="page active" id="page-live">
+  <div class="sidebar">
+    <div class="sb-head">
+      <input class="qbox" id="lq" placeholder="Run, fleet, line, destination…" oninput="renderList();renderMarkers()"/>
+      <div class="chips" id="modeChips">
+        <div class="chip on" onclick="setMode('all',this)">All</div>
+        <div class="chip" onclick="setMode('sydneytrains',this)">Trains</div>
+        <div class="chip" onclick="setMode('metro',this)">Metro</div>
+        <div class="chip" onclick="setMode('special',this)">Special</div>
+        <div class="chip" onclick="setMode('intercity',this)">Intercity</div>
+      </div>
+      <div class="chips" id="lineChips"></div>
+    </div>
+    <div class="sb-body" id="liveList"></div>
+  </div>
+
+  <div id="map">
+    <div id="leaflet"></div>
+    <div class="map-ctrls">
+      <div class="mcbtn on" id="mkCircle" onclick="setMk('circle')">● Compact</div>
+      <div class="mcbtn" id="mkLabel" onclick="setMk('label')">▬ Label</div>
+      <div class="mcbtn" id="mkDot" onclick="setMk('dot')">· Dot</div>
+      <div class="mcbtn" style="margin-top:4px" onclick="toggleBear()">⊕ Bearing</div>
+    </div>
+  </div>
+
+  <div class="detail hide" id="dtPanel">
+    <button class="dt-x" onclick="closeDetail()">✕</button>
+    <div class="dt-top">
+      <div class="dt-run" id="dtRun">—</div>
+      <div class="dt-sub" id="dtSub">—</div>
+      <div class="dt-tags" id="dtTags"></div>
+    </div>
+    <div class="dt-meta" id="dtMeta"></div>
+    <div class="consist-strip" id="csStrip" style="display:none">
+      <div class="cs-label">Consist</div>
+      <div class="cs-cars" id="csCars"></div>
+    </div>
+    <div class="dt-stops" id="dtStops"></div>
+  </div>
+</div>
+
+<!-- ══ WEB TLS ══ -->
+<div class="page" id="page-tls">
+  <div class="tls-outer">
+    <div class="tls-side">
+      <div class="tls-legend">
+        <h3>Legend</h3>
+        <div class="leg"><div class="leg-bar" style="background:var(--green)"></div>Train present</div>
+        <div class="leg"><div class="leg-bar" style="background:var(--red)"></div>Late &gt;3 min</div>
+        <div class="leg"><div class="leg-bar" style="background:var(--yellow)"></div>Special working</div>
+        <div class="leg"><div class="leg-bar" style="background:var(--border)"></div>Clear</div>
+      </div>
+      <h3>On diagram</h3>
+      <div class="tls-list" id="tlsList"></div>
+      <div class="tls-warn">GPS approximation · not real track circuit data</div>
+    </div>
+    <div class="tls-canvas">
+      <svg id="tls-svg" viewBox="0 0 1800 480" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1800" height="480" fill="#04050a"/>
+        <!-- Grid -->
+        <g stroke="#0a0b12" stroke-width="1">
+          <line x1="0" y1="60"  x2="1800" y2="60"/>
+          <line x1="0" y1="130" x2="1800" y2="130"/>
+          <line x1="0" y1="200" x2="1800" y2="200"/>
+          <line x1="0" y1="270" x2="1800" y2="270"/>
+          <line x1="0" y1="340" x2="1800" y2="340"/>
+          <line x1="0" y1="410" x2="1800" y2="410"/>
+        </g>
+        <!-- Station verticals -->
+        <g stroke="#111620" stroke-width="1" stroke-dasharray="2,5">
+          <line x1="120"  y1="10" x2="120"  y2="470"/>
+          <line x1="300"  y1="10" x2="300"  y2="470"/>
+          <line x1="480"  y1="10" x2="480"  y2="470"/>
+          <line x1="660"  y1="10" x2="660"  y2="470"/>
+          <line x1="840"  y1="10" x2="840"  y2="470"/>
+          <line x1="1020" y1="10" x2="1020" y2="470"/>
+          <line x1="1200" y1="10" x2="1200" y2="470"/>
+          <line x1="1380" y1="10" x2="1380" y2="470"/>
+          <line x1="1560" y1="10" x2="1560" y2="470"/>
+          <line x1="1740" y1="10" x2="1740" y2="470"/>
+        </g>
+        <!-- Station labels -->
+        <g font-family="JetBrains Mono,monospace" font-size="8" fill="#2a3050" text-anchor="middle" font-weight="500">
+          <text x="120"  y="17">CENTRAL</text>
+          <text x="300"  y="17">REDFERN</text>
+          <text x="480"  y="17">SYDENHAM</text>
+          <text x="660"  y="17">WOLLI CK</text>
+          <text x="840"  y="17">ARNCLIFFE</text>
+          <text x="1020" y="17">BANKSIA</text>
+          <text x="1200" y="17">ROCKDALE</text>
+          <text x="1380" y="17">KOGARAH</text>
+          <text x="1560" y="17">ALLAWAH</text>
+          <text x="1740" y="17">CARLTON</text>
+        </g>
+        <!-- Row labels -->
+        <g font-family="JetBrains Mono,monospace" font-size="8" font-weight="700">
+          <text x="8" y="67"  fill="#005AA3">T4↑</text>
+          <text x="8" y="82"  fill="#005AA3">T4↓</text>
+          <text x="8" y="137" fill="#0098CD">T2↑</text>
+          <text x="8" y="152" fill="#0098CD">T2↓</text>
+          <text x="8" y="207" fill="#F99D1C">T1↑</text>
+          <text x="8" y="222" fill="#F99D1C">T1↓</text>
+          <text x="8" y="277" fill="#00954C">T8↑</text>
+          <text x="8" y="292" fill="#00954C">T8↓</text>
+          <text x="8" y="347" fill="#D11F2F">T9↑</text>
+          <text x="8" y="362" fill="#D11F2F">T9↓</text>
+        </g>
+        <!-- T4 Illawarra -->
+        <line id="t4_c_r_u"   x1="120" y1="62" x2="300" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8835" data-fl2="151.2050" data-tl="-33.8916" data-tl2="151.1934"/>
+        <line id="t4_c_r_d"   x1="120" y1="77" x2="300" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8916" data-fl2="151.1934" data-tl="-33.8835" data-tl2="151.2050"/>
+        <line id="t4_r_sy_u"  x1="300" y1="62" x2="480" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8916" data-fl2="151.1934" data-tl="-33.9138" data-tl2="151.1718"/>
+        <line id="t4_r_sy_d"  x1="300" y1="77" x2="480" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9138" data-fl2="151.1718" data-tl="-33.8916" data-tl2="151.1934"/>
+        <line id="t4_sy_w_u"  x1="480" y1="62" x2="660" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9138" data-fl2="151.1718" data-tl="-33.9322" data-tl2="151.1565"/>
+        <line id="t4_sy_w_d"  x1="480" y1="77" x2="660" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9322" data-fl2="151.1565" data-tl="-33.9138" data-tl2="151.1718"/>
+        <line id="t4_w_a_u"   x1="660" y1="62" x2="840" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9322" data-fl2="151.1565" data-tl="-33.9393" data-tl2="151.1476"/>
+        <line id="t4_w_a_d"   x1="660" y1="77" x2="840" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9393" data-fl2="151.1476" data-tl="-33.9322" data-tl2="151.1565"/>
+        <line id="t4_a_bk_u"  x1="840" y1="62" x2="1020" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9393" data-fl2="151.1476" data-tl="-33.9516" data-tl2="151.1364"/>
+        <line id="t4_a_bk_d"  x1="840" y1="77" x2="1020" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9516" data-fl2="151.1364" data-tl="-33.9393" data-tl2="151.1476"/>
+        <line id="t4_bk_rk_u" x1="1020" y1="62" x2="1200" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9516" data-fl2="151.1364" data-tl="-33.9575" data-tl2="151.1303"/>
+        <line id="t4_bk_rk_d" x1="1020" y1="77" x2="1200" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9575" data-fl2="151.1303" data-tl="-33.9516" data-tl2="151.1364"/>
+        <line id="t4_rk_kg_u" x1="1200" y1="62" x2="1380" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9575" data-fl2="151.1303" data-tl="-33.9623" data-tl2="151.1187"/>
+        <line id="t4_rk_kg_d" x1="1200" y1="77" x2="1380" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9623" data-fl2="151.1187" data-tl="-33.9575" data-tl2="151.1303"/>
+        <line id="t4_kg_al_u" x1="1380" y1="62" x2="1560" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9623" data-fl2="151.1187" data-tl="-33.9663" data-tl2="151.1119"/>
+        <line id="t4_kg_al_d" x1="1380" y1="77" x2="1560" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9663" data-fl2="151.1119" data-tl="-33.9623" data-tl2="151.1187"/>
+        <line id="t4_al_ca_u" x1="1560" y1="62" x2="1740" y2="62" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9663" data-fl2="151.1119" data-tl="-33.9700" data-tl2="151.1067"/>
+        <line id="t4_al_ca_d" x1="1560" y1="77" x2="1740" y2="77" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9700" data-fl2="151.1067" data-tl="-33.9663" data-tl2="151.1119"/>
+        <!-- T2 Airport/East Hills -->
+        <line id="t2_c_r_u"  x1="120" y1="132" x2="300" y2="132" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8835" data-fl2="151.2055" data-tl="-33.8916" data-tl2="151.1940"/>
+        <line id="t2_c_r_d"  x1="120" y1="147" x2="300" y2="147" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8916" data-fl2="151.1940" data-tl="-33.8835" data-tl2="151.2055"/>
+        <line id="t2_r_sy_u" x1="300" y1="132" x2="480" y2="132" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8916" data-fl2="151.1940" data-tl="-33.9138" data-tl2="151.1723"/>
+        <line id="t2_r_sy_d" x1="300" y1="147" x2="480" y2="147" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9138" data-fl2="151.1723" data-tl="-33.8916" data-tl2="151.1940"/>
+        <line id="t2_sy_w_u" x1="480" y1="132" x2="660" y2="132" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9138" data-fl2="151.1723" data-tl="-33.9322" data-tl2="151.1570"/>
+        <line id="t2_sy_w_d" x1="480" y1="147" x2="660" y2="147" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9322" data-fl2="151.1570" data-tl="-33.9138" data-tl2="151.1723"/>
+        <!-- T1 North Shore/Western -->
+        <line id="t1_c_n_u"  x1="120" y1="202" x2="480" y2="202" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8835" data-fl2="151.2050" data-tl="-33.8688" data-tl2="151.2071"/>
+        <line id="t1_c_n_d"  x1="120" y1="217" x2="480" y2="217" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8688" data-fl2="151.2071" data-tl="-33.8835" data-tl2="151.2050"/>
+        <line id="t1_n_w_u"  x1="480" y1="202" x2="840" y2="202" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8688" data-fl2="151.2071" data-tl="-33.8479" data-tl2="151.2087"/>
+        <line id="t1_n_w_d"  x1="480" y1="217" x2="840" y2="217" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8479" data-fl2="151.2087" data-tl="-33.8688" data-tl2="151.2071"/>
+        <line id="t1_w_str_u" x1="840" y1="202" x2="1200" y2="202" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8479" data-fl2="151.2087" data-tl="-33.8658" data-tl2="151.1009"/>
+        <line id="t1_w_str_d" x1="840" y1="217" x2="1200" y2="217" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8658" data-fl2="151.1009" data-tl="-33.8479" data-tl2="151.2087"/>
+        <!-- T8 Airport/South -->
+        <line id="t8_c_a_u"  x1="120" y1="272" x2="480" y2="272" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8835" data-fl2="151.2052" data-tl="-33.9319" data-tl2="151.1598"/>
+        <line id="t8_c_a_d"  x1="120" y1="287" x2="480" y2="287" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9319" data-fl2="151.1598" data-tl="-33.8835" data-tl2="151.2052"/>
+        <line id="t8_a_w_u"  x1="480" y1="272" x2="840" y2="272" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9319" data-fl2="151.1598" data-tl="-33.9516" data-tl2="151.1364"/>
+        <line id="t8_a_w_d"  x1="480" y1="287" x2="840" y2="287" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.9516" data-fl2="151.1364" data-tl="-33.9319" data-tl2="151.1598"/>
+        <!-- T9 Northern -->
+        <line id="t9_c_st_u" x1="120" y1="342" x2="480" y2="342" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8835" data-fl2="151.2050" data-tl="-33.8593" data-tl2="151.2072"/>
+        <line id="t9_c_st_d" x1="120" y1="357" x2="480" y2="357" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8593" data-fl2="151.2072" data-tl="-33.8835" data-tl2="151.2050"/>
+        <line id="t9_st_g_u" x1="480" y1="342" x2="840" y2="342" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8593" data-fl2="151.2072" data-tl="-33.8350" data-tl2="151.1935"/>
+        <line id="t9_st_g_d" x1="480" y1="357" x2="840" y2="357" stroke="#1e2030" stroke-width="6" stroke-linecap="round" data-fl="-33.8350" data-fl2="151.1935" data-tl="-33.8593" data-tl2="151.2072"/>
+        <g id="tls-trains"></g>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ══ TIMETABLE ══ -->
+<div class="page" id="page-tt">
+  <div class="tt-outer">
+    <div class="tt-filters">
+      <div>
+        <h3>Line</h3>
+        <select class="tt-sel" id="ttLine">
+          <option value="">All Lines</option>
+          <option value="T1">T1 North Shore &amp; Western</option>
+          <option value="T2">T2 Airport &amp; Inner West</option>
+          <option value="T3">T3 Liverpool &amp; Inner West</option>
+          <option value="T4">T4 Eastern Suburbs &amp; Illawarra</option>
+          <option value="T5">T5 Cumberland</option>
+          <option value="T6">T6 Lidcombe &amp; Bankstown</option>
+          <option value="T7">T7 Olympic Park</option>
+          <option value="T8">T8 Airport &amp; South</option>
+          <option value="T9">T9 Northern</option>
+          <option value="CCN">Central Coast &amp; Newcastle</option>
+          <option value="BML">Blue Mountains</option>
+          <option value="SCL">South Coast</option>
+          <option value="SHL">Southern Highlands</option>
+          <option value="M1">Sydney Metro</option>
+        </select>
+      </div>
+      <div>
+        <h3>Fleet type</h3>
+        <div class="set-grid" id="setGrid">
+          <button class="set-btn" data-code="A">Waratah A</button>
+          <button class="set-btn" data-code="B">Waratah B</button>
+          <button class="set-btn" data-code="D">Mariyung</button>
+          <button class="set-btn" data-code="T">Tangara</button>
+          <button class="set-btn" data-code="M">Millennium</button>
+          <button class="set-btn" data-code="H">OSCar</button>
+          <button class="set-btn" data-code="K">K Set</button>
+          <button class="set-btn" data-code="V">V Set</button>
+          <button class="set-btn" data-code="X">XPT</button>
+          <button class="set-btn" data-code="P">Xplorer</button>
+          <button class="set-btn" data-code="N">Endeavour</button>
+          <button class="set-btn" data-code="J">Hunter</button>
+          <button class="set-btn" data-code="R">NIF</button>
+          <button class="set-btn" data-code="MET">Metro</button>
+        </div>
+      </div>
+      <div>
+        <h3>Status</h3>
+        <select class="tt-sel" id="ttStatus">
+          <option value="">All</option>
+          <option value="live">Live only</option>
+          <option value="special">Special workings</option>
+        </select>
+      </div>
+      <div>
+        <h3>Air con</h3>
+        <select class="tt-sel" id="ttAC">
+          <option value="">Any</option>
+          <option value="yes">Air conditioned</option>
+          <option value="no">Not air conditioned</option>
+        </select>
+      </div>
+      <button class="tt-apply" onclick="loadTT()">Apply filters</button>
+    </div>
+    <div class="tt-main">
+      <div class="tt-topbar">
+        <input class="tt-q" id="ttQ" placeholder="Search destination, run, fleet…" oninput="renderTT()"/>
+        <div class="tt-cnt" id="ttCnt"></div>
+      </div>
+      <div class="tt-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>Line</th><th>Destination</th><th>Departs</th>
+              <th>Run</th><th>Fleet</th><th>Cars</th><th>AC</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="ttBody">
+            <tr><td colspan="8" class="empty">Apply filters to load timetable</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /app -->
+
+<!-- Consist Modal -->
+<div class="modal-bg" id="cmBg" onclick="if(event.target===this)closeCM()">
+  <div class="modal">
+    <h2 id="cmTitle">Consist</h2>
+    <div class="sub" id="cmSub"></div>
+    <div class="cm-tags" id="cmTags"></div>
+    <div class="cm-note" id="cmNote"></div>
+    <div class="cm-cars" id="cmCars"></div>
+    <div class="cm-legend" id="cmLegend"></div>
+    <button class="modal-close" onclick="closeCM()">Close</button>
+  </div>
+</div>
+
+<script>
+const API = 'http://localhost:5000/api';
+let allTrains=[], ttData=[], tlsSegs=[], map, markers={};
+let modeFilter='all', lineFilter='', mkMode='circle', bearOn=true;
+let selId=null, ttSetCode='', ttLine='', ttStatus='', ttAC='';
+
+// ─── ROUTE COLOURS ─────────────────────────────────────────────────────
+const RC={T1:'#F99D1C',T2:'#0098CD',T3:'#F37021',T4:'#005AA3',
+          T5:'#C4258F',T6:'#7D4199',T7:'#6F818E',T8:'#00954C',T9:'#D11F2F',
+          M1:'#009B77',M2:'#009B77',CCN:'#E4022D',BML:'#E4022D',SCL:'#E4022D',SHL:'#E4022D'};
+// Metro route_ids: SMNW_M1, SMSWC_M1 etc - must check before generic prefix match
+const METRO_PREFIXES=['SMNW','SMSWC','SMWP','SMBS','SM'];
+function rc(r){
+  if(!r)return'#666';
+  // Metro check first
+  for(const p of METRO_PREFIXES)if(r.startsWith(p))return'#009B77';
+  if(r.includes('_M')||r.startsWith('M1')||r.startsWith('M2'))return'#009B77';
+  for(const[k,v]of Object.entries(RC))if(r.startsWith(k))return v;
+  return'#666';
+}
+
+// ─── UTILS ─────────────────────────────────────────────────────────────
+function ft(t){
+  if(!t)return'—';
+  const p=t.split(':');if(p.length<2)return t;
+  let h=parseInt(p[0])%24,m=p[1];
+  const ap=h>=12?'pm':'am';h=h%12||12;return`${h}:${m}${ap}`;
+}
+function ds(s){
+  if(s==null)return'—';
+  const m=Math.round(s/60);
+  if(Math.abs(m)<1)return'<span class="ok">On time</span>';
+  if(m>0)return`<span class="late">+${m}m late</span>`;
+  return`<span class="early">${m}m early</span>`;
+}
+function occColor(pct){if(pct==null)return null;if(pct<40)return'#22c984';if(pct<70)return'#ffb020';return'#ff4055';}
+function occLabel(pct,status){
+  if(pct!=null)return pct+'%';
+  const sl=['Empty','Many seats','Some seats','Standing room','Crushed','Full','Not accepting','No data'];
+  return sl[status]||'';
+}
+function carDesc(type){
+  const m={DT:'Driving Trailer',DM:'Driving Motor',M:'Motor',T:'Trailer',
+    XP:'Power Car',XF:'Economy',XL:'First Class',XBR:'Buffet/First',XAM:'Sleeper',
+    DP:'Diesel Power',DS:'Diesel Saloon',DDA:'Driving Trailer (Accessible)',
+    DND:'Driving Motor',DN:'Motor',DNL:'Motor (Luggage)',DD:'Driving Trailer'};
+  return m[type]||type;
+}
+
+// ─── TAB SWITCHING ─────────────────────────────────────────────────────
+function goto(t){
+  document.querySelectorAll('.ntab').forEach((el,i)=>{
+    el.classList.toggle('on',['live','tls','tt'][i]===t);
+  });
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.getElementById(`page-${t}`).classList.add('active');
+  if(t==='live'&&!map)initMap();
+  renderTLS();
+}
+
+// ─── FETCH ─────────────────────────────────────────────────────────────
+async function fetchTrains(){
+  try{
+    const r=await fetch(`${API}/trains`);
+    if(!r.ok)throw new Error(r.status);
+    allTrains=await r.json();
+    const pill=document.getElementById('statusPill');
+    pill.className='pill live';
+    document.getElementById('sDot').className='dot g';
+    document.getElementById('sTxt').textContent='live · 15s';
+    document.getElementById('hCount').textContent=`${allTrains.length} trains`;
+    document.getElementById('hTime').textContent=new Date().toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    populateLineChips();
+    renderList();
+    if(map)renderMarkers();
+    renderTLS();
+  }catch(e){
+    document.getElementById('statusPill').className='pill off';
+    document.getElementById('sDot').className='dot r';
+    document.getElementById('sTxt').textContent='offline';
+  }
+}
+
+// ─── FILTER ────────────────────────────────────────────────────────────
+function matchTrain(t){
+  if(modeFilter==='sydneytrains'&&t.mode!=='sydneytrains')return false;
+  if(modeFilter==='metro'&&t.mode!=='metro')return false;
+  if(modeFilter==='special'&&!t.is_special)return false;
+  if(modeFilter==='intercity'&&!t.intercity)return false;
+  if(lineFilter&&!(t.route_short||'').startsWith(lineFilter))return false;
+  const q=document.getElementById('lq').value.toLowerCase();
+  if(q)return(t.run_number||'').toLowerCase().includes(q)||
+             (t.fleet_code||'').toLowerCase().includes(q)||
+             (t.fleet_name||'').toLowerCase().includes(q)||
+             (t.route_short||'').toLowerCase().includes(q)||
+             (t.headsign||'').toLowerCase().includes(q);
+  return true;
+}
+
+function setMode(m,el){
+  modeFilter=m;
+  document.querySelectorAll('#modeChips .chip').forEach(c=>c.classList.remove('on'));
+  el.classList.add('on');
+  renderList();if(map)renderMarkers();
+}
+
+function populateLineChips(){
+  const lines=[...new Set(allTrains.map(t=>t.route_short).filter(Boolean))].sort();
+  const el=document.getElementById('lineChips');
+  if(el.childElementCount===lines.length)return;
+  el.innerHTML=lines.map(l=>`<div class="chip" onclick="toggleLine('${l}',this)">${l}</div>`).join('');
+}
+
+function toggleLine(l,el){
+  const was=el.classList.contains('on');
+  document.querySelectorAll('#lineChips .chip').forEach(c=>c.classList.remove('on'));
+  lineFilter=was?'':(el.classList.add('on'),l);
+  renderList();if(map)renderMarkers();
+}
+
+// ─── LIVE LIST ──────────────────────────────────────────────────────────
+function renderList(){
+  const filtered=allTrains.filter(matchTrain);
+  const el=document.getElementById('liveList');
+  if(!filtered.length){el.innerHTML='<div class="empty">No trains</div>';return;}
+  el.innerHTML=filtered.slice(0,150).map(t=>{
+    const color=t.route_color||rc(t.route_short);
+    const d=t.delay_seconds||0;
+    const dc=Math.abs(d)<60?'ok':d>0?'late':'early';
+    const dm=Math.abs(d)<60?'On time':d>0?`+${Math.round(d/60)}m`:`${Math.round(d/60)}m`;
+    return`<div class="tc${selId===t.trip_id?' sel':''}" onclick="selectTrain('${t.trip_id}')">
+      <div class="tc-top">
+        <span class="lbadge" style="background:${color}">${t.route_short||'?'}</span>
+        <span class="tc-dest">${t.headsign||'Unknown'}</span>
+        ${t.is_special?'<span class="stag spec">SPEC</span>':''}
+        ${t.cancelled?'<span class="stag cncl">CNCL</span>':''}
+      </div>
+      <div class="tc-bot">
+        <span>RUN <b>${t.run_number||'—'}</b></span>
+        <span class="s">${t.fleet_code?t.fleet_name:'—'}</span>
+        ${t.car_count?`<span>${t.car_count}c</span>`:''}
+        ${t.air_conditioned===true?'<span class="ok" title="Air conditioned">❄</span>':t.air_conditioned===false?'<span class="ac-no" title="Not air conditioned">no AC</span>':''}
+        <span class="${dc}" style="margin-left:auto">${dm}</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+// ─── MAP ────────────────────────────────────────────────────────────────
+function initMap(){
+  map=L.map('leaflet',{center:[-33.87,151.21],zoom:11});
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OSM',maxZoom:18}).addTo(map);
+  renderMarkers();
+}
+
+function setMk(m){
+  mkMode=m;
+  ['circle','label','dot'].forEach(x=>{
+    document.getElementById('mk'+x[0].toUpperCase()+x.slice(1)).classList.toggle('on',x===m);
+  });
+  Object.values(markers).forEach(mk=>map.removeLayer(mk));
+  markers={};renderMarkers();
+}
+
+let bearOn2=true;
+function toggleBear(){bearOn=!bearOn;Object.values(markers).forEach(m=>map.removeLayer(m));markers={};renderMarkers();}
+
+function makeIcon(t){
+  const color=t.route_color||rc(t.route_short)||'#666';
+  const rs=t.route_short||'?', run=t.run_number||'?';
+  const bear=bearOn?`transform:rotate(${t.bearing||0}deg);`:'';
+  if(mkMode==='dot')return L.divIcon({className:'',html:`<div class="mk-dot" style="background:${color};${bear}"></div>`,iconSize:[10,10],iconAnchor:[5,5]});
+  if(mkMode==='label')return L.divIcon({className:'',html:`<div class="mk-label" style="${bear}"><div class="mk-label-line" style="background:${color}">${rs}</div><div class="mk-label-run">${run}</div></div>`,iconSize:[60,20],iconAnchor:[30,10]});
+  return L.divIcon({className:'',html:`<div class="mk-circle" style="background:${color};${bear}">${rs}</div>`,iconSize:[22,22],iconAnchor:[11,11]});
+}
+
+function makePopup(t){
+  const color=t.route_color||rc(t.route_short);
+  const d=t.delay_seconds||0;
+  const dm=Math.abs(d)<60?'On time':d>0?`+${Math.round(d/60)} min late`:`${Math.round(d/60)} min early`;
+  const locStr=['In transit','Stopped at','Approaching'][t.current_status]||'—';
+  const lastSeen=t.timestamp?new Date(t.timestamp*1000).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+  return`<div class="pu">
+    <div class="pu-run" style="color:${color}">Run ${t.run_number||'?'}</div>
+    <div class="pu-row"><span class="pu-l">Line</span><span class="pu-v">${t.route_short||'—'}</span></div>
+    <div class="pu-row"><span class="pu-l">To</span><span class="pu-v">${t.headsign||'—'}</span></div>
+    <div class="pu-row"><span class="pu-l">Fleet</span><span class="pu-v a">${t.fleet_name||'—'}</span></div>
+    <div class="pu-row"><span class="pu-l">Cars</span><span class="pu-v">${t.car_count||'—'}</span></div>
+    <div class="pu-row"><span class="pu-l">Air con</span><span class="pu-v" style="color:${t.air_conditioned?'var(--green)':'var(--muted)'}">${t.air_conditioned===true?'Yes':t.air_conditioned===false?'No':'—'}</span></div>
+    <div class="pu-row"><span class="pu-l">Speed</span><span class="pu-v">${t.speed==null?'<span style="color:var(--muted)">Not reported</span>':t.speed>0?t.speed+' km/h':'Stationary'}</span></div>
+    <div class="pu-row"><span class="pu-l">Status</span><span class="pu-v">${dm}</span></div>
+    <div class="pu-row"><span class="pu-l">Location</span><span class="pu-v">${locStr}</span></div>
+    ${t.location_id?`<div class="pu-row"><span class="pu-l">Berth</span><span class="pu-v a" style="font-size:9px">${t.location_id}</span></div>`:''}
+    <div class="pu-row"><span class="pu-l">Reported</span><span class="pu-v" style="font-size:10px">${lastSeen}</span></div>
+    <button class="pu-btn p" onclick="openDetail('${t.trip_id}')">Full info + stops</button>
+    <button class="pu-btn c" onclick="openConsist('${t.trip_id}')">View consist</button>
+  </div>`;
+}
+
+function renderMarkers(){
+  const filtered=allTrains.filter(t=>t.lat&&t.lon&&matchTrain(t));
+  const seen=new Set();
+  filtered.forEach(t=>{
+    seen.add(t.trip_id);
+    const icon=makeIcon(t), popup=makePopup(t);
+    if(markers[t.trip_id]){markers[t.trip_id].setLatLng([t.lat,t.lon]).setIcon(icon).setPopupContent(popup);}
+    else{markers[t.trip_id]=L.marker([t.lat,t.lon],{icon}).bindPopup(popup,{maxWidth:260}).addTo(map);}
+  });
+  Object.keys(markers).forEach(id=>{if(!seen.has(id)){map.removeLayer(markers[id]);delete markers[id];}});
+}
+
+function selectTrain(id){
+  selId=id;renderList();
+  const t=allTrains.find(x=>x.trip_id===id);
+  if(t?.lat&&t?.lon&&map){map.setView([t.lat,t.lon],14);markers[id]?.openPopup();}
+  openDetail(id);
+}
+
+// ─── DETAIL PANEL ────────────────────────────────────────────────────────
+async function openDetail(id){
+  const panel=document.getElementById('dtPanel');
+  panel.classList.remove('hide');
+  const t=allTrains.find(x=>x.trip_id===id);
+  if(!t)return;
+  selId=id;renderList();
+
+  const color=t.route_color||rc(t.route_short);
+  document.getElementById('dtRun').innerHTML=`<span style="color:${color}">Run ${t.run_number||'?'}</span>`;
+  document.getElementById('dtSub').textContent=`${t.route_short||''} to ${t.headsign||'?'}`;
+
+  // Tags
+  const tags=[];
+  if(t.air_conditioned===true) tags.push(`<span class="dtag ac">❄ Air conditioned</span>`);
+  else if(t.air_conditioned===false) tags.push(`<span class="dtag noac">No AC</span>`);
+  if(t.double_deck) tags.push(`<span class="dtag dd">Double deck</span>`);
+  if(t.electric&&!t.diesel) tags.push(`<span class="dtag el">⚡ Electric</span>`);
+  if(t.diesel) tags.push(`<span class="dtag di">🛢 Diesel</span>`);
+  if(t.is_special) tags.push(`<span class="dtag sp">Special working</span>`);
+  if(t.cancelled) tags.push(`<span class="dtag cn">Cancelled</span>`);
+  document.getElementById('dtTags').innerHTML=tags.join('');
+
+  // Meta
+  const d=t.delay_seconds||0;
+  const dc=Math.abs(d)<60?'g':d>0?'r':'g';
+  const dm=Math.abs(d)<60?'On time':d>0?`+${Math.round(d/60)} min late`:`${Math.round(d/60)} min early`;
+  const loc=['In transit','Stopped at','Approaching'][t.current_status]||'—';
+  const lastSeen=t.timestamp?new Date(t.timestamp*1000).toLocaleTimeString('en-AU',{hour:'2-digit',minute:'2-digit',second:'2-digit'}):'—';
+  document.getElementById('dtMeta').innerHTML=`
+    <div><div class="dm-l">Run Number</div><div class="dm-v">${t.run_number||'—'}</div></div>
+    ${t.set_number?`<div><div class="dm-l">Set Number</div><div class="dm-v a">${t.set_number}</div></div>`:''}
+    <div><div class="dm-l">Fleet</div><div class="dm-v a">${t.fleet_name||'—'}</div></div>
+    <div><div class="dm-l">Cars</div><div class="dm-v">${t.car_count||'—'}</div></div>
+    <div><div class="dm-l">Max speed</div><div class="dm-v">${t.max_speed?t.max_speed+' km/h':'—'}</div></div>
+    <div><div class="dm-l">Speed</div><div class="dm-v">${t.speed==null?'<span style="color:var(--dim)">Not reported</span>':t.speed>0?t.speed+' km/h':'Stationary'}</div></div>
+    <div><div class="dm-l">Status</div><div class="dm-v ${dc}">${dm}</div></div>
+    <div><div class="dm-l">Location</div><div class="dm-v">${loc}</div></div>
+    <div><div class="dm-l">Next stop</div><div class="dm-v" style="font-size:10px">${t.next_stop||'—'}</div></div>
+    <div><div class="dm-l">Track location</div><div class="dm-v loc">${t.location_id||'—'}</div></div>
+    <div><div class="dm-l">Last report</div><div class="dm-v" style="font-size:10px">${lastSeen}</div></div>
+    <div><div class="dm-l">Introduced</div><div class="dm-v">${t.introduced||'—'}</div></div>
+    <div><div class="dm-l">Mode</div><div class="dm-v">${t.mode==='metro'?'Sydney Metro':'Sydney Trains'}</div></div>`;
+
+  // Consist strip
+  const cs=document.getElementById('csStrip');
+  const carsData=t.consist||[];
+  if(carsData.length||t.car_count){
+    cs.style.display='block';
+    const carsEl=document.getElementById('csCars');
+    const n=carsData.length||t.car_count;
+    const bodyColor=color;
+    carsEl.innerHTML=Array.from({length:n},(_,i)=>{
+      const car=carsData[i]||{};
+      const occ=car.occ_pct;
+      const bg=occ!=null?occColor(occ):bodyColor;
+      const lbl=car.label||car.type||String(i+1);
+      return`<div class="cs-car" style="background:${bg}" title="Car ${i+1}: ${carDesc(car.type||'')}${occ!=null?' – '+occ+'% full':''}" onclick="openConsist('${id}')">
+        <div style="font-size:7px;font-family:var(--mono)">${lbl}</div>
+        ${occ!=null?`<div style="font-size:7px">${occ}%</div>`:''}
+      </div>`;
+    }).join('');
+  } else cs.style.display='none';
+
+  // Stops
+  document.getElementById('dtStops').innerHTML='<div class="empty">Loading…</div>';
+  try{
+    const r=await fetch(`${API}/train/trip/${encodeURIComponent(id)}`);
+    const data=await r.json();
+    const stops=data.scheduled_stops||[];
+    const skipSeqs=new Set((data.stop_updates||[]).filter(u=>u.skipped).map(u=>String(u.stop_sequence)));
+    const liveMap={};(data.stop_updates||[]).forEach(u=>liveMap[String(u.stop_sequence)]=u);
+    const firstLive=(data.stop_updates||[]).find(u=>!u.skipped)?.stop_sequence;
+    if(!stops.length){document.getElementById('dtStops').innerHTML='<div class="empty">No stop data in database</div>';return;}
+    document.getElementById('dtStops').innerHTML=stops.map((s,i)=>{
+      const seq=String(s.sequence);
+      const skip=skipSeqs.has(seq);
+      const lv=liveMap[seq];
+      const isNext=String(firstLive)===seq;
+      const past=firstLive&&parseInt(seq)<parseInt(firstLive)&&!skip;
+      const delay=lv?.delay;
+      const dTxt=delay!=null&&Math.abs(delay)>=60?`<span class="sr-delay ${delay>0?'late':'ok'}">${delay>0?'+':''}${Math.round(delay/60)}m</span>`:'';
+      return`<div class="sr${isNext?' nxt':''}${past||skip?' done':''}">
+        <div class="sr-line"></div><div class="sr-dot"></div>
+        <div class="sr-name">${s.stop_name}${skip?'<span class="sr-skip">NOT STOPPING</span>':''}${dTxt}</div>
+        <div class="sr-time">${ft(s.arrival)}</div>
+      </div>`;
+    }).join('');
+  }catch{document.getElementById('dtStops').innerHTML='<div class="empty">Could not load stops</div>';}
+}
+
+function closeDetail(){document.getElementById('dtPanel').classList.add('hide');selId=null;renderList();}
+
+// ─── CONSIST MODAL ───────────────────────────────────────────────────────
+function openConsist(id){
+  const t=allTrains.find(x=>x.trip_id===id);
+  if(!t)return;
+  document.getElementById('cmBg').classList.add('show');
+  const color=t.route_color||rc(t.route_short)||'#333';
+  document.getElementById('cmTitle').textContent=`${t.fleet_name||'Train'} — Run ${t.run_number||'?'}`;
+  document.getElementById('cmSub').textContent=
+    `${t.route_short||''} to ${t.headsign||'?'} · ${t.car_count||'?'} cars`;
+
+  // Tags
+  const ctags=[];
+  if(t.air_conditioned===true) ctags.push(`<span class="dtag ac">❄ Air conditioned</span>`);
+  else if(t.air_conditioned===false) ctags.push(`<span class="dtag noac">No AC</span>`);
+  if(t.double_deck) ctags.push(`<span class="dtag dd">Double deck</span>`);
+  if(t.electric&&!t.diesel) ctags.push(`<span class="dtag el">⚡ Electric</span>`);
+  if(t.diesel) ctags.push(`<span class="dtag di">🛢 Diesel</span>`);
+  if(t.introduced) ctags.push(`<span class="dtag el">Est. ${t.introduced}</span>`);
+  if(t.max_speed) ctags.push(`<span class="dtag el">Max ${t.max_speed} km/h</span>`);
+  document.getElementById('cmTags').innerHTML=ctags.join('');
+
+  document.getElementById('cmNote').textContent=t.fleet_notes||'';
+
+  const cars=t.consist||[];
+  const hasOcc=cars.some(c=>c.occ_pct!=null);
+
+  if(!cars.length){
+    document.getElementById('cmCars').innerHTML='<div style="color:var(--muted);font-size:12px;padding:10px">No consist data available for this service.</div>';
+    document.getElementById('cmLegend').innerHTML='';
+    return;
+  }
+
+  document.getElementById('cmCars').innerHTML=cars.map((car,i)=>{
+    const occ=car.occ_pct;
+    const oc=occColor(occ);
+    const ol=occLabel(occ,car.occ_status);
+    const isCab=car.cab||car.type==='XP'||car.type==='DP';
+    const icons=[
+      car.diesel?'🛢':'',
+      car.motor&&!car.diesel?'⚡':'',
+      car.accessible?'♿':'',
+      car.toilet?'🚽':'',
+      car.buffet?'🍽':'',
+      car.sleeper?'🛏':'',
+      car.luggage?'🧳':'',
+      car.class_type==='First Class'?'⭐':'',
+      car.class_type==='Economy'?'💺':'',
+    ].filter(Boolean).join('');
+    const borderColor=isCab?color:'rgba(255,255,255,.12)';
+    const barPct=occ!=null?occ:0;
+    return`<div class="cm-car">
+      <div class="cm-car-n" style="color:${color}">${i+1}</div>
+      <div class="cm-car-body${isCab?' cab-end':''}" style="${isCab?'border-color:'+color:''}">
+        ${occ!=null?`<div class="cm-occ-bar" style="width:${barPct}%;background:${oc}"></div>`:''}
+        <div class="cm-car-inner">
+          <span class="cm-car-type" style="color:${isCab?color:'var(--text)'}">${car.label||car.type}</span>
+          <span class="cm-car-desc">${carDesc(car.type)}</span>
+          ${car.class_type?`<span style="font-size:9px;color:var(--muted)">${car.class_type}</span>`:''}
+          <span class="cm-car-icons">${icons}</span>
+        </div>
+      </div>
+      <div class="cm-occ-val" style="color:${occ!=null?oc:'var(--dim)'}">${ol}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('cmLegend').innerHTML=hasOcc?`
+    <span style="color:#22c984">■</span> &lt;40% Plenty of space
+    <span style="color:#ffb020">■</span> 40–70% Some crowding
+    <span style="color:#ff4055">■</span> &gt;70% Very crowded – avoid if possible`:'';
+}
+
+function closeCM(){document.getElementById('cmBg').classList.remove('show');}
+
+// ─── WEB TLS ─────────────────────────────────────────────────────────────
+function buildTLSSegs(){
+  tlsSegs=[];
+  document.querySelectorAll('#tls-svg [data-fl]').forEach(el=>{
+    tlsSegs.push({
+      id:el.id,el,
+      fLat:parseFloat(el.dataset.fl),fLon:parseFloat(el.dataset.fl2),
+      tLat:parseFloat(el.dataset.tl),tLon:parseFloat(el.dataset.tl2),
+      x1:parseFloat(el.getAttribute('x1')),y1:parseFloat(el.getAttribute('y1')),
+      x2:parseFloat(el.getAttribute('x2')),y2:parseFloat(el.getAttribute('y2')),
+    });
+  });
+}
+
+function snap(lat,lon){
+  let best=null,bestD=Infinity;
+  tlsSegs.forEach(s=>{
+    const dx=s.tLon-s.fLon,dy=s.tLat-s.fLat,lenSq=dx*dx+dy*dy;
+    let t2=lenSq===0?0:((lat-s.fLat)*dy+(lon-s.fLon)*dx)/lenSq;
+    t2=Math.max(0,Math.min(1,t2));
+    const d=Math.hypot(lat-s.fLat-t2*dy,lon-s.fLon-t2*dx);
+    if(d<bestD){bestD=d;best=s;}
+  });
+  return bestD<0.012?best:null;
+}
+
+function renderTLS(){
+  if(!tlsSegs.length)buildTLSSegs();
+  tlsSegs.forEach(s=>s.el.setAttribute('stroke','#1e2030'));
+  const ov=document.getElementById('tls-trains');ov.innerHTML='';
+  const NS='http://www.w3.org/2000/svg';
+  const items=[];
+
+  allTrains.forEach(t=>{
+    if(!t.lat||!t.lon)return;
+    const seg=snap(t.lat,t.lon);if(!seg)return;
+    const d=t.delay_seconds||0;
+    const sc=t.is_special?'#ffb020':Math.abs(d)>180?'#ff4055':'#22c984';
+    seg.el.setAttribute('stroke',sc);
+    const dx=seg.x2-seg.x1,dy2=seg.y2-seg.y1;
+    const gdx=seg.tLon-seg.fLon,gdy=seg.tLat-seg.fLat,gl=gdx*gdx+gdy*gdy;
+    let tt2=gl===0?0:((t.lat-seg.fLat)*gdy+(t.lon-seg.fLon)*gdx)/gl;
+    tt2=Math.max(0,Math.min(1,tt2));
+    const px=seg.x1+tt2*dx,py=seg.y1+tt2*dy2;
+    const color=t.route_color||rc(t.route_short)||'#666';
+    const label=t.run_number||t.route_short||'?';
+    const w=label.length*6+10;
+    const g=document.createElementNS(NS,'g');g.style.cursor='pointer';
+    g.addEventListener('click',()=>{goto('live');setTimeout(()=>selectTrain(t.trip_id),80);});
+    const ck=document.createElementNS(NS,'circle');
+    ck.setAttribute('cx',px);ck.setAttribute('cy',seg.y1);ck.setAttribute('r','4');ck.setAttribute('fill',sc);
+    const rect=document.createElementNS(NS,'rect');
+    rect.setAttribute('x',px-w/2);rect.setAttribute('y',seg.y1-20);
+    rect.setAttribute('width',w);rect.setAttribute('height',12);
+    rect.setAttribute('rx','2');rect.setAttribute('fill',color);rect.setAttribute('opacity','.93');
+    const txt=document.createElementNS(NS,'text');
+    txt.setAttribute('x',px);txt.setAttribute('y',seg.y1-14);
+    txt.setAttribute('text-anchor','middle');txt.setAttribute('dominant-baseline','middle');
+    txt.setAttribute('font-family','JetBrains Mono,monospace');txt.setAttribute('font-size','8');
+    txt.setAttribute('font-weight','700');txt.setAttribute('fill','white');txt.textContent=label;
+    g.appendChild(ck);g.appendChild(rect);g.appendChild(txt);ov.appendChild(g);
+    items.push(`<div class="tc" style="padding:6px 8px;margin:2px" onclick="goto('live');setTimeout(()=>selectTrain('${t.trip_id}'),80)">
+      <div class="tc-top">
+        <span class="lbadge" style="background:${color};font-size:9px">${t.route_short||'?'}</span>
+        <b style="font-size:11px">Run ${t.run_number||'?'}</b>
+        ${t.is_special?'<span class="stag spec">SPEC</span>':''}
+      </div>
+      <div class="tc-bot">
+        <span class="s">${t.fleet_name||'—'}</span>
+        ${t.car_count?`<span>${t.car_count}c</span>`:''}
+        ${t.air_conditioned===true?'<span class="ok">❄</span>':''}
+      </div>
+    </div>`);
+  });
+  document.getElementById('tlsList').innerHTML=items.length?items.join('')
+    :'<div class="empty" style="padding:16px;font-size:11px">No trains on diagram</div>';
+}
+
+// ─── TIMETABLE ───────────────────────────────────────────────────────────
+let ttSetCode2='';
+document.querySelectorAll('.set-btn').forEach(btn=>{
+  btn.addEventListener('click',()=>{
+    const code=btn.dataset.code;
+    const was=btn.classList.contains('on');
+    document.querySelectorAll('.set-btn').forEach(b=>b.classList.remove('on'));
+    ttSetCode2=was?'':(btn.classList.add('on'),code);
+  });
+});
+
+async function loadTT(){
+  ttLine=document.getElementById('ttLine').value;
+  ttStatus=document.getElementById('ttStatus').value;
+  ttAC=document.getElementById('ttAC').value;
+  document.getElementById('ttBody').innerHTML='<tr><td colspan="8" class="empty">Loading…</td></tr>';
+  try{
+    const r=await fetch(`${API}/timetable${ttLine?'?line='+ttLine:''}`);
+    ttData=await r.json();
+    renderTT();
+  }catch(e){
+    document.getElementById('ttBody').innerHTML=`<tr><td colspan="8" class="empty">Error — is server.py running?</td></tr>`;
+  }
+}
+
+function renderTT(){
+  const q=document.getElementById('ttQ').value.toLowerCase();
+  const filtered=ttData.filter(t=>{
+    if(ttStatus==='live'&&!t.is_live)return false;
+    if(ttStatus==='special'&&!t.is_special)return false;
+    if(ttSetCode2&&t.fleet_code!==ttSetCode2)return false;
+    if(ttAC==='yes'&&t.air_conditioned!==true)return false;
+    if(ttAC==='no'&&t.air_conditioned!==false)return false;
+    if(q)return(t.headsign||'').toLowerCase().includes(q)||
+               (t.fleet_name||'').toLowerCase().includes(q)||
+               (t.run_number||'').toLowerCase().includes(q)||
+               (t.route_short||'').toLowerCase().includes(q);
+    return true;
+  });
+  document.getElementById('ttCnt').textContent=`${filtered.length} services`;
+  if(!filtered.length){
+    document.getElementById('ttBody').innerHTML='<tr><td colspan="8" class="empty">No services match</td></tr>';
+    return;
+  }
+  document.getElementById('ttBody').innerHTML=filtered.slice(0,400).map(t=>{
+    const color=t.route_color||rc(t.route_short);
+    const d=t.delay||0;
+    const status=!t.is_live
+      ?'<span style="color:var(--muted);font-size:10px">Scheduled</span>'
+      :Math.abs(d)<60?'<span class="ok" style="font-size:10px">On time</span>'
+      :d>0?`<span class="late" style="font-size:10px">+${Math.round(d/60)}m</span>`
+      :`<span class="early" style="font-size:10px">${Math.round(d/60)}m early</span>`;
+    const acHtml=t.air_conditioned===true?'<span class="ac-yes">❄</span>':t.air_conditioned===false?'<span class="ac-no">—</span>':'<span style="color:var(--dim)">?</span>';
+    return`<tr onclick="ttClick('${t.trip_id}')">
+      <td><span class="tt-badge" style="background:${color}">${t.route_short||'?'}</span></td>
+      <td>${t.headsign||'—'}</td>
+      <td style="font-family:var(--mono);font-size:10px">${ft(t.first_dep)}</td>
+      <td style="font-family:var(--mono);color:var(--muted)">${t.is_live?'<span class="live-dot"></span>':''}${t.run_number||'—'}</td>
+      <td class="tt-fleet">${t.fleet_name||'—'}</td>
+      <td style="font-family:var(--mono);font-size:10px;color:var(--muted)">${t.car_count||'—'}</td>
+      <td>${acHtml}</td>
+      <td>${status}${t.is_special?'<span class="stag spec" style="margin-left:4px">SPEC</span>':''}</td>
+    </tr>`;
+  }).join('');
+}
+
+function ttClick(id){
+  const t=allTrains.find(x=>x.trip_id===id);
+  if(t){goto('live');setTimeout(()=>selectTrain(id),100);}
+}
+
+// ─── INIT ────────────────────────────────────────────────────────────────
+initMap();
+fetchTrains();
+setInterval(fetchTrains,15000);
+</script>
+</body>
+</html>
