@@ -796,6 +796,20 @@ def api_fleet():
 def index(): return send_from_directory(".", "index.html")
 
 if __name__ == "__main__":
+    # Auto-build DB in background if missing (for hosted deployments like Render)
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gtfs.db")
+    if not os.path.exists(db_path) or os.path.getsize(db_path) == 0:
+        print("gtfs.db not found — building in background (timetable tab unavailable until done)...")
+        def build_db():
+            try:
+                import load_gtfs
+                load_gtfs.main()
+                print("gtfs.db ready — timetable tab now available")
+            except Exception as e:
+                print(f"gtfs.db build failed: {e}")
+        threading.Thread(target=build_db, daemon=True).start()
+
     threading.Thread(target=poll, daemon=True).start()
     print("NSW Rail Tracker running at http://localhost:5000")
-    app.run(port=5000, debug=False)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=False)

@@ -1,13 +1,9 @@
 """
-Run this once to load static GTFS data into gtfs.db
-Run again each morning to refresh timetables.
+Load TfNSW GTFS static data into gtfs.db
+Streams large files in batches to stay within free tier memory limits.
+Run once after deployment, then daily to refresh timetables.
 """
-import sqlite3
-import zipfile
-import csv
-import requests
-import io
-import os
+import sqlite3, zipfile, csv, requests, io, os
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -20,68 +16,111 @@ GTFS_URLS = [
     "https://api.transport.nsw.gov.au/v1/gtfs/schedule/metro",
 ]
 
-FILES_TO_LOAD = [
+# Load these fully into memory (small files, safe)
+SMALL_FILES = [
     "stops.txt",
     "trips.txt",
     "routes.txt",
-    "stop_times.txt",
     "calendar.txt",
     "calendar_dates.txt",
 ]
 
-def load_zip_to_db(zip_bytes, db, mode_tag):
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
-        available = z.namelist()
-        for filename in FILES_TO_LOAD:
-            if filename not in available:
-                print(f"  skipping {filename} (not in zip)")
-                continue
+# Stream these in batches (large files)
+LARGE_FILES = [
+    "stop_times.txt",
+]
 
-            with z.open(filename) as f:
-                reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
-                rows = list(reader)
-                if not rows:
-                    print(f"  {filename} empty")
-                    continue
+BATCH_SIZE = 5000  # rows per insert batch — keeps peak RAM under ~50MB
 
-                file_cols = list(rows[0].keys())
-                table = filename.replace(".txt", "")
+def ensure_table(db, table, cols):
+    """Create table if not exists, add missing columns if it does."""
+    existing = db.execute(f'PRAGMA table_info("{table}")').fetchall()
+    if existing:
+        existing_cols = [r[1] for r in existing]
+        for col in cols:
+            if col not in existing_cols:
+                db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT')
+        return [c for c in cols if c in existing_cols + [c for c in cols if c not in existing_cols]]
+    else:
+        col_defs = ", ".join(f'"{c}" TEXT' for c in cols)
+        db.execute(f'CREATE TABLE "{table}" ({col_defs})')
+        return cols
 
-                # Get existing table columns if table already exists
-                existing = db.execute(
-                    f"PRAGMA table_info(\"{table}\")"
-                ).fetchall()
+def load_small(db, z, filename):
+    """Load a small file fully into memory."""
+    if filename not in z.namelist():
+        print(f"  skipping {filename} (not in zip)")
+        return
+    with z.open(filename) as f:
+        reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+        rows = list(reader)
+        if not rows:
+            print(f"  {filename} empty")
+            return
+        cols = list(rows[0].keys())
+        table = filename.replace(".txt", "")
+        insert_cols = ensure_table(db, table, cols)
+        ph = ",".join("?" * len(insert_cols))
+        cl = ",".join(f'"{c}"' for c in insert_cols)
+        db.executemany(
+            f'INSERT OR IGNORE INTO "{table}" ({cl}) VALUES ({ph})',
+            [[r.get(c, "") for c in insert_cols] for r in rows]
+        )
+        db.commit()
+        print(f"  loaded {len(rows):,} rows from {filename}")
 
-                if existing:
-                    # Table exists — find common columns to insert into
-                    existing_cols = [row[1] for row in existing]
-                    # Add any new columns from this feed
-                    for col in file_cols:
-                        if col not in existing_cols:
-                            db.execute(f'ALTER TABLE "{table}" ADD COLUMN "{col}" TEXT')
-                            existing_cols.append(col)
-                    insert_cols = [c for c in file_cols if c in existing_cols]
-                else:
-                    # Create fresh table with this feed's columns
-                    col_defs = ", ".join(f'"{c}" TEXT' for c in file_cols)
-                    db.execute(f'CREATE TABLE "{table}" ({col_defs})')
-                    insert_cols = file_cols
-
-                # Insert only the columns this file has
-                placeholders = ",".join("?" * len(insert_cols))
-                col_list = ",".join(f'"{c}"' for c in insert_cols)
+def load_large(db, z, filename):
+    """Stream a large file in batches to minimise peak RAM."""
+    if filename not in z.namelist():
+        print(f"  skipping {filename} (not in zip)")
+        return
+    table = filename.replace(".txt", "")
+    total = 0
+    with z.open(filename) as f:
+        reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+        cols = None
+        insert_cols = None
+        ph = None
+        cl = None
+        batch = []
+        for row in reader:
+            # First row — set up table
+            if cols is None:
+                cols = list(row.keys())
+                insert_cols = ensure_table(db, table, cols)
+                ph = ",".join("?" * len(insert_cols))
+                cl = ",".join(f'"{c}"' for c in insert_cols)
+            batch.append([row.get(c, "") for c in insert_cols])
+            if len(batch) >= BATCH_SIZE:
                 db.executemany(
-                    f'INSERT OR IGNORE INTO "{table}" ({col_list}) VALUES ({placeholders})',
-                    [[r.get(c, "") for c in insert_cols] for r in rows]
+                    f'INSERT OR IGNORE INTO "{table}" ({cl}) VALUES ({ph})', batch
                 )
-                print(f"  loaded {len(rows):,} rows from {filename}")
+                db.commit()
+                total += len(batch)
+                batch = []
+                print(f"  {filename}: {total:,} rows...", end="\r")
+        # Remaining rows
+        if batch:
+            db.executemany(
+                f'INSERT OR IGNORE INTO "{table}" ({cl}) VALUES ({ph})', batch
+            )
+            db.commit()
+            total += len(batch)
+    print(f"  loaded {total:,} rows from {filename}        ")
+
+def load_zip(zip_bytes, db):
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+        for filename in SMALL_FILES:
+            load_small(db, z, filename)
+        for filename in LARGE_FILES:
+            load_large(db, z, filename)
 
 def main():
-    db_path = os.path.join(os.path.dirname(__file__), "gtfs.db")
+    db_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gtfs.db")
     db = sqlite3.connect(db_path)
 
     # Drop existing tables for fresh load
-    for f in FILES_TO_LOAD:
+    for f in SMALL_FILES + LARGE_FILES:
         table = f.replace(".txt", "")
         db.execute(f'DROP TABLE IF EXISTS "{table}"')
     db.commit()
@@ -90,25 +129,26 @@ def main():
         mode = url.split("/")[-1]
         print(f"\nDownloading {mode}...")
         try:
-            r = requests.get(url, headers=HEADERS, timeout=60)
+            r = requests.get(url, headers=HEADERS, timeout=120)
             r.raise_for_status()
             print(f"  got {len(r.content)/1024/1024:.1f} MB")
-            load_zip_to_db(r.content, db, mode)
+            load_zip(r.content, db)
         except Exception as e:
             print(f"  ERROR: {e}")
 
-    # Create indexes for fast lookups
     print("\nCreating indexes...")
     indexes = [
-        ('trips',          'trip_id'),
-        ('stop_times',     'trip_id'),
-        ('stops',          'stop_id'),
-        ('routes',         'route_id'),
-        ('calendar',       'service_id'),
+        ("trips",      "trip_id"),
+        ("stop_times", "trip_id"),
+        ("stops",      "stop_id"),
+        ("routes",     "route_id"),
+        ("calendar",   "service_id"),
     ]
     for table, col in indexes:
         try:
-            db.execute(f'CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON "{table}"("{col}")')
+            db.execute(
+                f'CREATE INDEX IF NOT EXISTS idx_{table}_{col} ON "{table}"("{col}")'
+            )
         except Exception as e:
             print(f"  skipping index on {table}.{col}: {e}")
 
